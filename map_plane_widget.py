@@ -28,8 +28,8 @@ import os
 class PlaneTracker:
 
     MAP_STYLE    = "dark-v11"   # streets-v12 | dark-v11 | outdoors-v12
-    IMAGE_SIZE   = 500         # square pixels
-    REFRESH_SECS = 0.5          # OpenSky poll interval
+    IMAGE_SIZE   = 500          # square pixels
+    REFRESH_SECS = 0.5           # OpenSky poll interval
 
     def __init__(self, lat: float, lon: float, zoom: int):
         load_dotenv()
@@ -48,8 +48,9 @@ class PlaneTracker:
         self.root.title(f"Live Plane Tracker  —  {lat:.4f}, {lon:.4f}")
         self.root.resizable(False, False)
 
-        self.label = tk.Label(self.root, bg="black")
-        self.label.pack()
+        self.canvas = tk.Canvas(self.root, width=self.IMAGE_SIZE, height=self.IMAGE_SIZE, bg="black", highlightthickness=0)
+        self.canvas.pack()
+        self.canvas_img = self.canvas.create_image(0, 0, anchor="nw")
 
         self.status_var = tk.StringVar(value="Fetching map…")
         tk.Label(self.root, textvariable=self.status_var,
@@ -202,9 +203,11 @@ class PlaneTracker:
     def _render(self):
         if self.base_map is None:
             return
-        img = self._composite()
-        self.tk_img = ImageTk.PhotoImage(img)
-        self.label.config(image=self.tk_img)
+        img = self._composite()  # heavy work stays on background thread
+        def update():
+            self.tk_img = ImageTk.PhotoImage(img)  # created on main thread
+            self.canvas.itemconfig(self.canvas_img, image=self.tk_img)
+        self.root.after(0, update)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
