@@ -28,8 +28,8 @@ import os
 class PlaneTracker:
 
     MAP_STYLE    = "dark-v11"   # streets-v12 | dark-v11 | outdoors-v12
-    IMAGE_SIZE   = 800          # square pixels
-    REFRESH_SECS = 10          # OpenSky poll interval
+    IMAGE_SIZE   = 500         # square pixels
+    REFRESH_SECS = 0.5          # OpenSky poll interval
 
     def __init__(self, lat: float, lon: float, zoom: int):
         load_dotenv()
