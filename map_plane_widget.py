@@ -31,8 +31,8 @@ MAP_STYLE  = "dark-v11"   # streets-v12 | dark-v11 | outdoors-v12
 IMAGE_WIDTH = 800          # wide rectangle width in pixels
 IMAGE_HEIGHT = 500         # wide rectangle height in pixels
 SHADOW_OFFSET = 15         # pixels offset for shadow (higher = planes appear further up)
-ALTITUDE_SCALE = 0.15      # pixels per meter of altitude (0.15 = 150 pixels per 1000m, ~1500 pixels at cruising altitude)
-MAX_ALTITUDE = 8000       # maximum altitude in meters (cap for display, ~40,000 ft cruising)
+ALTITUDE_SCALE = 0.05      # pixels per meter of altitude (0.15 = 150 pixels per 1000m, ~1500 pixels at cruising altitude)
+MAX_ALTITUDE = 5000       # maximum altitude in meters (cap for display, ~40,000 ft cruising)
 
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 TOKEN_REFRESH_MARGIN = 30  # seconds before expiry to refresh
@@ -126,10 +126,10 @@ def enhance_map(img: Image.Image) -> Image.Image:
     return img.convert("RGB")
 
 
-def fetch_map(lat: float, lon: float, zoom: int, token: str) -> Image.Image:
+def fetch_map(lat: float, lon: float, zoom: int, token: str, bearing: float = 0) -> Image.Image:
     url = (
         f"https://api.mapbox.com/styles/v1/mapbox/{MAP_STYLE}/static/"
-        f"{lon},{lat},{zoom},0/"
+        f"{lon},{lat},{zoom},{bearing}/"
         f"{IMAGE_WIDTH}x{IMAGE_HEIGHT}"
         f"?access_token={token}"
     )
@@ -160,7 +160,8 @@ def fetch_planes(min_lat, min_lon, max_lat, max_lon, token_manager: TokenManager
 
 
 def geo_to_pixel(lon: float, lat: float,
-                 center_lat: float, center_lon: float, zoom: int) -> tuple[int, int]:
+                 center_lat: float, center_lon: float, zoom: int,
+                 bearing: float = 0) -> tuple[int, int]:
     def merc_y(lat_deg):
         rad = math.radians(lat_deg)
         return math.log(math.tan(math.pi / 4 + rad / 2))
@@ -170,7 +171,12 @@ def geo_to_pixel(lon: float, lat: float,
     cy = scale * (math.pi - merc_y(center_lat))
     px = scale * (math.radians(lon) + math.pi)
     py = scale * (math.pi - merc_y(lat))
-    return int(IMAGE_WIDTH / 2 + (px - cx)), int(IMAGE_HEIGHT / 2 + (py - cy))
+    dx, dy = px - cx, py - cy
+    if bearing != 0:
+        b = math.radians(bearing)
+        cos_b, sin_b = math.cos(b), math.sin(b)
+        dx, dy = dx * cos_b + dy * sin_b, -dx * sin_b + dy * cos_b
+    return int(IMAGE_WIDTH / 2 + dx), int(IMAGE_HEIGHT / 2 + dy)
 
 
 def get_airline_color(callsign: str) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
@@ -245,62 +251,30 @@ def get_airline_color(callsign: str) -> tuple[tuple[int, int, int], tuple[int, i
     return (primary, secondary1, secondary2)
 
 
-def draw_plane_shadow(draw: ImageDraw.ImageDraw, x: int, y: int,
-                      heading: float | None):
-    """Draw a subtle shadow beneath the plane for depth. Returns center position."""
+def draw_connecting_line(draw: ImageDraw.ImageDraw, ground_pos: tuple[int, int], 
+                        plane_pos: tuple[int, int], color: tuple[int, int, int]):
+    """Draw a thin vertical line connecting ground to plane."""
+    # Draw a thin line from ground to plane
+    draw.line([ground_pos, plane_pos], fill=color, width=1)
+
+
+def create_plane_image(heading: float | None, callsign: str, size: int = 100):
+    """Create a plane image on a transparent canvas.
+    
+    Returns:
+        PIL Image (RGBA) with the plane centered
+    """
+    # Create a transparent canvas
+    img = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    
+    # Center position
+    x, y = size // 2, size // 2
+    
     angle = math.radians((heading or 0) - 90)
     cos_a, sin_a = math.cos(angle), math.sin(angle)
-    
-    # Shadow is at ground position
-    sx, sy = x, y
     
     # Plane scale factor
-    scale = 2.5
-    
-    def rotate(dx, dy):
-        return (sx + int(dx * scale * cos_a - dy * scale * sin_a),
-                sy + int(dx * scale * sin_a + dy * scale * cos_a))
-    
-    nose = rotate(10, 0)
-    tail = rotate(-8, 0)
-    wing_left = rotate(0, -8)
-    wing_right = rotate(0, 8)
-    wing_front = rotate(2, 0)
-    tail_top = rotate(-8, -3)
-    tail_bottom = rotate(-8, 3)
-    
-    # Draw shadow - dark and subtle
-    draw.line([wing_left, wing_front, wing_right], fill=(30, 30, 30), width=8)
-    draw.line([nose, tail], fill=(30, 30, 30), width=10)
-    draw.line([tail_top, tail, tail_bottom], fill=(30, 30, 30), width=7)
-    
-    # Return center position of shadow for connecting line
-    return (sx, sy)
-
-
-def draw_connecting_line(draw: ImageDraw.ImageDraw, shadow_pos: tuple[int, int], 
-                        plane_pos: tuple[int, int], color: tuple[int, int, int]):
-    """Draw a thin vertical line connecting shadow to plane."""
-    # Draw a thin line from shadow to plane
-    draw.line([shadow_pos, plane_pos], fill=color, width=1)
-
-
-def draw_plane(draw: ImageDraw.ImageDraw, x: int, y: int,
-               heading: float | None, callsign: str, altitude: float | None = None):
-    """Draw a larger plane with airline-specific 3-color scheme at altitude-adjusted position."""
-    angle = math.radians((heading or 0) - 90)
-    cos_a, sin_a = math.cos(angle), math.sin(angle)
-    
-    # Calculate altitude offset (planes higher in the sky appear further up on screen)
-    altitude_offset = 0
-    if altitude is not None and altitude > 0:
-        # Scale altitude to pixels - significantly elevated
-        altitude_offset = int(altitude * ALTITUDE_SCALE)
-    
-    # Adjust y position based on altitude (negative = upward)
-    y = y - altitude_offset
-    
-    # Plane scale factor (2.5x bigger)
     scale = 2.5
     
     def rotate(dx, dy):
@@ -341,7 +315,7 @@ def draw_plane(draw: ImageDraw.ImageDraw, x: int, y: int,
     # Tail with primary color
     draw.line([tail_top, tail, tail_bottom], fill=primary_color, width=int(2 * scale))
     
-    # Add secondary color accents on wingtips (small highlights at the tips only)
+    # Add secondary color accents on wingtips
     wingtip_size = int(1.2 * scale)
     draw.ellipse([wing_left[0]-wingtip_size, wing_left[1]-wingtip_size, 
                   wing_left[0]+wingtip_size, wing_left[1]+wingtip_size],
@@ -350,7 +324,7 @@ def draw_plane(draw: ImageDraw.ImageDraw, x: int, y: int,
                   wing_right[0]+wingtip_size, wing_right[1]+wingtip_size],
                  fill=secondary1_color)
     
-    # Add secondary2 color accent on tail (small line matching tail shape)
+    # Add secondary2 color accent on tail
     draw.line([tail_top, tail_bottom], fill=secondary2_color, width=int(1.5 * scale))
     
     # Draw callsign label
@@ -358,6 +332,138 @@ def draw_plane(draw: ImageDraw.ImageDraw, x: int, y: int,
     if label:
         draw.text((x + int(12 * scale), y - int(10 * scale)), label,
                   fill=primary_color, stroke_fill=(0, 0, 0), stroke_width=2)
+    
+    return img, primary_color
+
+
+def warp_plane_at_position(plane_img: Image.Image, y_pos: float, 
+                           image_height: int, top_shrink: float, vertical_shift: float):
+    """Apply perspective warp to a plane based on its vertical position."""
+    # Calculate the scale factor based on y position in the perspective
+    # Planes higher up (lower y) should be smaller due to perspective
+    
+    # Normalize y position (0 at top, 1 at bottom)
+    top_y = image_height * vertical_shift
+    if y_pos < top_y:
+        # Above the perspective top, use top scale
+        scale_factor = top_shrink
+    else:
+        # Interpolate between top and bottom
+        t = (y_pos - top_y) / (image_height - top_y)
+        scale_factor = top_shrink + (1.0 - top_shrink) * t
+    
+    # Also apply horizontal squeeze based on position
+    horizontal_scale = scale_factor
+    
+    # Resize the plane
+    original_size = plane_img.size
+    new_width = int(original_size[0] * horizontal_scale)
+    new_height = int(original_size[1] * scale_factor)
+    
+    if new_width > 0 and new_height > 0:
+        warped = plane_img.resize((new_width, new_height), Image.LANCZOS)
+        return warped
+    
+    return plane_img
+
+
+def draw_plane(draw: ImageDraw.ImageDraw, x: int, y: int,
+               heading: float | None, callsign: str, altitude: float | None = None):
+    """Legacy function - kept for compatibility. Use draw_plane_warped for perspective effect."""
+    # Calculate altitude offset
+    altitude_offset = 0
+    if altitude is not None and altitude > 0:
+        altitude_offset = int(altitude * ALTITUDE_SCALE)
+    
+    y = y - altitude_offset
+    
+    angle = math.radians((heading or 0) - 90)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    scale = 2.5
+    
+    def rotate(dx, dy):
+        return (x + int(dx * scale * cos_a - dy * scale * sin_a),
+                y + int(dx * scale * sin_a + dy * scale * cos_a))
+    
+    nose = rotate(10, 0)
+    tail = rotate(-8, 0)
+    wing_left = rotate(0, -8)
+    wing_right = rotate(0, 8)
+    wing_front = rotate(2, 0)
+    tail_top = rotate(-8, -3)
+    tail_bottom = rotate(-8, 3)
+    
+    primary_color, secondary1_color, secondary2_color = get_airline_color(callsign)
+    glow_color = tuple(int(c * 0.3) for c in primary_color)
+    
+    draw.line([wing_left, wing_front, wing_right], fill=glow_color, width=int(4 * scale))
+    draw.line([nose, tail], fill=glow_color, width=int(5 * scale))
+    
+    bright_color = tuple(min(255, int(c * 1.2)) for c in primary_color)
+    
+    draw.line([wing_left, wing_front, wing_right], fill=primary_color, width=int(2 * scale))
+    draw.line([nose, tail], fill=bright_color, width=int(3 * scale))
+    draw.line([tail_top, tail, tail_bottom], fill=primary_color, width=int(2 * scale))
+    
+    wingtip_size = int(1.2 * scale)
+    draw.ellipse([wing_left[0]-wingtip_size, wing_left[1]-wingtip_size, 
+                  wing_left[0]+wingtip_size, wing_left[1]+wingtip_size],
+                 fill=secondary1_color)
+    draw.ellipse([wing_right[0]-wingtip_size, wing_right[1]-wingtip_size, 
+                  wing_right[0]+wingtip_size, wing_right[1]+wingtip_size],
+                 fill=secondary1_color)
+    
+    draw.line([tail_top, tail_bottom], fill=secondary2_color, width=int(1.5 * scale))
+    
+    label = (callsign or "").strip()
+    if label:
+        draw.text((x + int(12 * scale), y - int(10 * scale)), label,
+                  fill=primary_color, stroke_fill=(0, 0, 0), stroke_width=2)
+    
+    return primary_color
+
+
+def draw_plane_warped(base_img: Image.Image, x: int, y: int,
+                     heading: float | None, callsign: str, altitude: float | None,
+                     image_height: int, top_shrink: float, vertical_shift: float):
+    """Draw a plane with perspective warp applied based on its position.
+    
+    Args:
+        base_img: The base image to draw on (will be modified)
+        x, y: Ground position (before altitude adjustment)
+        heading: Plane heading in degrees
+        callsign: Plane callsign for coloring
+        altitude: Altitude in meters
+        image_height: Total image height for perspective calculation
+        top_shrink: Perspective top shrink factor
+        vertical_shift: Perspective vertical shift factor
+    
+    Returns:
+        Primary color of the plane
+    """
+    # Calculate altitude offset
+    altitude_offset = 0
+    if altitude is not None and altitude > 0:
+        altitude_offset = int(altitude * ALTITUDE_SCALE)
+    
+    plane_y = y - altitude_offset
+    
+    # Create the plane on a separate canvas
+    plane_img, primary_color = create_plane_image(heading, callsign)
+    
+    # Apply perspective warp based on GROUND position (not elevated position)
+    # This ensures warping is based on where the plane is on the map, not its altitude
+    warped_plane = warp_plane_at_position(plane_img, y, image_height, 
+                                          top_shrink, vertical_shift)
+    
+    # Calculate paste position (centered on plane location)
+    paste_x = x - warped_plane.width // 2
+    paste_y = plane_y - warped_plane.height // 2
+    
+    # Paste the warped plane onto the base image
+    base_img.paste(warped_plane, (paste_x, paste_y), warped_plane)
+    
+    return primary_color
     
     # Return the plane's primary color for the connecting line
     return primary_color
@@ -418,73 +524,139 @@ def warp_to_trapezium(image, top_shrink, vertical_shift):
     return warped
 
 
-def create_hologram_cross(img: Image.Image) -> Image.Image:
+def draw_compass(img: Image.Image, bearing: float) -> Image.Image:
+    """Overlay a NESW compass rose at the bottom-right corner of img.
+
+    The labels rotate with the map bearing so each directional panel shows
+    the correct cardinal orientation.  The compass is drawn after warping so
+    it is never perspective-distorted.
     """
-    Create a hologram cross layout with 4 copies of the image,
-    each rotated to face toward the center.
-    
+    img = img.copy()
+    draw = ImageDraw.Draw(img)
+
+    margin = 15
+    radius = 22
+    cx = img.width  - margin - radius
+    cy = img.height - margin - radius
+
+    # Semi-transparent dark background circle for readability
+    pad = 5
+    draw.ellipse(
+        [cx - radius - pad, cy - radius - pad,
+         cx + radius + pad, cy + radius + pad],
+        fill=(0, 0, 0, 160)
+    )
+
+    # Cardinals in clockwise order; index 0=N, 1=E, 2=S, 3=W
+    cardinals = ['N', 'E', 'S', 'W']
+    # Determine which cardinal is "up" on this map from its bearing
+    up_idx = int(round(bearing / 90)) % 4
+
+    # Screen unit vectors: up, right, down, left
+    screen_dirs = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+    # Fine-tune text offset per screen direction so labels sit neatly outside
+    text_nudge = [(0, -8), (6, -4), (0, 0), (-14, -4)]
+
+    for i, (dx, dy) in enumerate(screen_dirs):
+        label = cardinals[(up_idx + i) % 4]
+        color = (255, 80, 80) if label == 'N' else (210, 210, 210)
+
+        ax = int(cx + dx * radius)
+        ay = int(cy + dy * radius)
+
+        # Spoke line
+        draw.line([(cx, cy), (ax, ay)], fill=color, width=2)
+
+        # Arrowhead (small triangle at tip)
+        tip_size = 4
+        # Perpendicular unit vector for arrowhead width
+        px, py = -dy, dx
+        arrow = [
+            (ax, ay),
+            (ax - dx * tip_size + px * tip_size, ay - dy * tip_size + py * tip_size),
+            (ax - dx * tip_size - px * tip_size, ay - dy * tip_size - py * tip_size),
+        ]
+        draw.polygon(arrow, fill=color)
+
+        # Cardinal label
+        nx, ny = text_nudge[i]
+        draw.text((ax + nx, ay + ny), label, fill=color,
+                  stroke_fill=(0, 0, 0), stroke_width=2)
+
+    # Centre dot
+    dot_r = 3
+    draw.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r],
+                 fill=(255, 220, 0))
+
+    return img
+
+
+def create_hologram_cross(img_south: Image.Image, img_north: Image.Image,
+                          img_east: Image.Image, img_west: Image.Image) -> Image.Image:
+    """
+    Create a hologram cross layout using four directional map views.
+
+    Each panel uses a map rendered from the matching cardinal bearing so that
+    the geometry and plane headings are correct for every face of the pyramid.
+
     Layout:
-           [Top - 180°]
-    [Left - 90°] [Right - 270°]
-         [Bottom - 0°]
+           [Top   - north view, bearing 180°]
+    [Left  - east view, bearing 270°]  [Right - west view, bearing 90°]
+           [Bottom - south view, bearing   0°]
     """
-    # Ensure input is RGBA
-    if img.mode != 'RGBA':
-        img = img.convert('RGBA')
-    
-    width, height = img.size
-    
-    # Pre-rotate left and right to know their dimensions, then mirror vertically (since they're rotated)
-    left = img.rotate(90, expand=True, fillcolor=(0, 0, 0, 0)).transpose(Image.FLIP_TOP_BOTTOM)
-    right = img.rotate(-90, expand=True, fillcolor=(0, 0, 0, 0)).transpose(Image.FLIP_TOP_BOTTOM)
-    
+    # Ensure all inputs are RGBA
+    def to_rgba(img):
+        return img if img.mode == 'RGBA' else img.convert('RGBA')
+
+    img_south = to_rgba(img_south)
+    img_north = to_rgba(img_north)
+    img_east  = to_rgba(img_east)
+    img_west  = to_rgba(img_west)
+
+    width, height = img_south.size
+
+    # Apply hologram display transforms (same geometry as before)
+    left  = img_east.rotate(90,  expand=True, fillcolor=(0, 0, 0, 0)).transpose(Image.FLIP_TOP_BOTTOM)
+    right = img_west.rotate(-90, expand=True, fillcolor=(0, 0, 0, 0)).transpose(Image.FLIP_TOP_BOTTOM)
+
     # Minimal gap between images
-    gap_x = 20
-    gap_y = 800
-    
-    # Calculate canvas dimensions to tightly fit all rotated images
-    # Horizontal: need to fit left + top/bottom + right side-by-side
-    # Note: left and right are rotated, so their widths are the original height
-    canvas_width = left.width + gap_x + width + gap_x + right.width
-    
-    # Vertical: need to fit top + bottom stacked, or accommodate left/right height
+    gap_x = 50
+    gap_y = 570
+
+    canvas_width  = left.width + gap_x + width + gap_x + right.width
     vertical_for_topbottom = height + gap_y + height
-    vertical_for_sides = max(left.height, right.height)
+    vertical_for_sides     = max(left.height, right.height)
     canvas_height = max(vertical_for_topbottom, vertical_for_sides)
-    
-    canvas = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 255))
-    
-    # Calculate center position for top/bottom images
+
+    canvas   = Image.new('RGBA', (canvas_width, canvas_height), (0, 0, 0, 255))
     center_x = left.width + gap_x
-    
-    # All images are flipped 180° for hologram pyramid viewing, then mirrored
-    # Bottom: 180° (upside down) - at bottom of vertical space
-    bottom = img.rotate(180, expand=False, fillcolor=(0, 0, 0, 0)).transpose(Image.FLIP_LEFT_RIGHT)
+
+    # Bottom: south view (bearing 0°), rotated 180° then flipped left-right
+    bottom   = img_south.rotate(180, expand=False, fillcolor=(0, 0, 0, 0)).transpose(Image.FLIP_LEFT_RIGHT)
     bottom_y = canvas_height - height
     canvas.paste(bottom, (center_x, bottom_y), bottom)
-    
-    # Top: 0° - at top of vertical space, mirrored
-    top = img.copy().transpose(Image.FLIP_LEFT_RIGHT)
+
+    # Top: north view (bearing 180°), flipped left-right
+    top = img_north.copy().transpose(Image.FLIP_LEFT_RIGHT)
     canvas.paste(top, (center_x, 0), top)
-    
-    # Left: 90° - pushed to left edge, centered vertically
+
+    # Left: east view (bearing 270°), rotated 90° then flipped top-bottom
     left_y = (canvas_height - left.height) // 2
     canvas.paste(left, (0, left_y), left)
-    
-    # Right: -90° (270°) - pushed to right edge, centered vertically
+
+    # Right: west view (bearing 90°), rotated -90° then flipped top-bottom
     right_y = (canvas_height - right.height) // 2
     right_x = canvas_width - right.width
     canvas.paste(right, (right_x, right_y), right)
-    
-    # Convert back to RGB for display (composite onto black)
+
+    # Composite onto black for final RGB output
     final = Image.new('RGB', (canvas_width, canvas_height), (0, 0, 0))
     final.paste(canvas, (0, 0), canvas)
-    
     return final
 
 
 def composite(base_map: Image.Image, planes: list,
-              lat: float, lon: float, zoom: int) -> Image.Image:
+              lat: float, lon: float, zoom: int, bearing: float = 0) -> Image.Image:
     # Use fixed vertical expansion based on MAX_ALTITUDE to keep canvas size constant
     vertical_expansion = int(MAX_ALTITUDE * ALTITUDE_SCALE) + 100  # Extra padding
     expanded_height = IMAGE_HEIGHT + vertical_expansion
@@ -495,12 +667,62 @@ def composite(base_map: Image.Image, planes: list,
     
     # Apply slight blur to map for depth of field effect
     expanded_img = expanded_img.filter(ImageFilter.GaussianBlur(radius=0.5))
-    draw = ImageDraw.Draw(expanded_img)
-
-    # Store shadow positions and plane data for three-pass rendering
+    
+    # Convert to numpy and warp ONLY the map to trapezoid
+    img_array = np.array(expanded_img)
+    
+    # Apply trapezoid perspective transformation parameters
+    top_shrink = 0.3
+    vertical_shift = 0.8
+    
+    h, w = img_array.shape[:2]
+    
+    # Convert to RGBA if not already
+    if img_array.shape[2] == 3:
+        img_array = cv2.cvtColor(img_array, cv2.COLOR_RGB2RGBA)
+    
+    # Define the perspective transform
+    src = np.float32([
+        [0, 0],
+        [w, 0],
+        [w, h],
+        [0, h]
+    ])
+    
+    top_width = w * top_shrink
+    margin = (w - top_width) / 2
+    top_y = h * vertical_shift
+    
+    dst = np.float32([
+        [margin, top_y],          # top left
+        [w - margin, top_y],      # top right
+        [w, h],                   # bottom right
+        [0, h]                    # bottom left
+    ])
+    
+    # Get the perspective transformation matrix
+    matrix = cv2.getPerspectiveTransform(src, dst)
+    
+    # Warp the map
+    warped_map_array = cv2.warpPerspective(img_array, matrix, (w, h), 
+                                           borderMode=cv2.BORDER_CONSTANT,
+                                           borderValue=(0, 0, 0, 0))
+    
+    # Convert warped map back to PIL Image
+    warped_img = Image.fromarray(warped_map_array, 'RGBA')
+    draw = ImageDraw.Draw(warped_img)
+    
+    # Function to transform coordinates using the perspective matrix
+    def transform_point(x, y):
+        """Transform a point through the perspective matrix."""
+        pt = np.array([[[x, y]]], dtype=np.float32)
+        transformed = cv2.perspectiveTransform(pt, matrix)
+        return int(transformed[0][0][0]), int(transformed[0][0][1])
+    
+    # Store plane data for two-pass rendering (no shadows)
     plane_data = []
     
-    # First pass: draw all shadows and collect positions (adjusted for expanded canvas)
+    # First pass: collect plane positions (adjusted for expanded canvas)
     for state in planes:
         try:
             plon, plat = state[5], state[6]
@@ -510,15 +732,18 @@ def composite(base_map: Image.Image, planes: list,
             # Cap altitude at MAX_ALTITUDE
             if altitude is not None and altitude > MAX_ALTITUDE:
                 altitude = MAX_ALTITUDE
-            x, y = geo_to_pixel(plon, plat, lat, lon, zoom)
+            x, y = geo_to_pixel(plon, plat, lat, lon, zoom, bearing)
             # Adjust y for expanded canvas
             y_adjusted = y + vertical_expansion
             if 0 <= x < IMAGE_WIDTH and 0 <= y < IMAGE_HEIGHT:
-                shadow_pos = draw_plane_shadow(draw, x, y_adjusted, state[10])
+                # Transform the ground position through perspective
+                ground_x, ground_y = transform_point(x, y_adjusted)
+                # Adjust heading so the icon faces correctly on the rotated map
+                raw_heading = state[10]
+                adjusted_heading = ((raw_heading - bearing) % 360) if raw_heading is not None else None
                 plane_data.append({
-                    'shadow_pos': shadow_pos,
-                    'ground_pos': (x, y_adjusted),
-                    'heading': state[10],
+                    'ground_pos': (ground_x, ground_y),
+                    'heading': adjusted_heading,
                     'callsign': state[1] or "",
                     'altitude': altitude
                 })
@@ -529,56 +754,43 @@ def composite(base_map: Image.Image, planes: list,
     for data in plane_data:
         altitude = data['altitude']
         if altitude is not None and altitude > 0:
-            # Calculate plane position with altitude offset
+            # Calculate plane position with altitude offset (upward from transformed ground position)
             altitude_offset = int(altitude * ALTITUDE_SCALE)
             plane_pos = (data['ground_pos'][0], data['ground_pos'][1] - altitude_offset)
             
             # Get the plane's primary color for the line
             primary_color, _, _ = get_airline_color(data['callsign'])
             
-            # Draw connecting line
-            draw_connecting_line(draw, data['shadow_pos'], plane_pos, primary_color)
+            # Draw connecting line from ground to plane
+            draw_connecting_line(draw, data['ground_pos'], plane_pos, primary_color)
     
-    # Third pass: draw all planes on top
+    # Third pass: draw all planes on top with perspective warp applied
     for data in plane_data:
         x, y = data['ground_pos']
-        plane_color = draw_plane(draw, x, y, data['heading'], data['callsign'], data['altitude'])
-
-    # Convert PIL Image to numpy array for OpenCV
-    img_array = np.array(expanded_img)
-    
-    # Apply trapezoid perspective transformation with strong perspective
-    warped_array = warp_to_trapezium(img_array, top_shrink=0.3, vertical_shift=0.8)
-    
-    # Convert back to PIL Image (RGBA with transparency)
-    warped_img = Image.fromarray(warped_array, 'RGBA')
+        plane_color = draw_plane_warped(warped_img, x, y, data['heading'], data['callsign'], 
+                                       data['altitude'], h, top_shrink, vertical_shift)
     
     # Find the bounding box of actual content (non-black pixels)
     # Convert to numpy for analysis
-    warped_array_rgba = np.array(warped_img)
+    # Use fixed crop dimensions to prevent size changes when planes move
+    # Crop from bottom of image (where map is) upward by a fixed height
+    fixed_display_height = 700  # Fixed height in pixels
+    bottom_crop = warped_img.height
+    top_crop = max(0, bottom_crop - fixed_display_height)
     
-    # Find rows that have any non-black content
-    # Sum across width and channels, any row with sum > threshold has content
-    row_sums = np.sum(warped_array_rgba, axis=(1, 2))
-    non_empty_rows = np.where(row_sums > 100)[0]  # Threshold to ignore near-black
+    # Crop the image to fixed dimensions
+    warped_img = warped_img.crop((0, top_crop, warped_img.width, bottom_crop))
     
-    if len(non_empty_rows) > 0:
-        # Crop to just the content area with minimal padding
-        top_crop = max(0, non_empty_rows[0])  # No padding above topmost content
-        bottom_crop = min(warped_img.height, non_empty_rows[-1])  # Minimal padding below
-        
-        # Further limit the height - crop more of the top if still too tall
-        max_display_height = 700  # Maximum height in pixels
-        cropped_height = bottom_crop - top_crop
-        if cropped_height > max_display_height:
-            # Keep bottom, crop more from top
-            top_crop = bottom_crop - max_display_height
-        
-        # Crop the image
-        warped_img = warped_img.crop((0, top_crop, warped_img.width, bottom_crop))
-    
-    # Create hologram cross layout
-    return create_hologram_cross(warped_img)
+    # Scale down the image to make the 4 images in the cross smaller
+    scale_factor = 0.6  # Scale to 60% of original size
+    new_width = int(warped_img.width * scale_factor)
+    new_height = int(warped_img.height * scale_factor)
+    warped_img = warped_img.resize((new_width, new_height), Image.LANCZOS)
+
+    # Overlay compass rose (not warped)
+    warped_img = draw_compass(warped_img, bearing)
+
+    return warped_img
 
 
 def main():
@@ -596,9 +808,12 @@ def main():
     client_secret = os.getenv("clientSecret")
     token_manager = TokenManager(client_id, client_secret)
     
-    # Fetch map once (doesn't change)
-    print("Fetching map…")
-    base_map = fetch_map(args.lat, args.lon, args.zoom, token)
+    # Fetch one map per cardinal direction (bearings stay fixed, only plane data changes)
+    print("Fetching maps…")
+    map_south = fetch_map(args.lat, args.lon, args.zoom, token, bearing=0)
+    map_north = fetch_map(args.lat, args.lon, args.zoom, token, bearing=180)
+    map_east  = fetch_map(args.lat, args.lon, args.zoom, token, bearing=270)
+    map_west  = fetch_map(args.lat, args.lon, args.zoom, token, bearing=90)
     
     # Setup matplotlib for live updates with maximized window
     plt.ion()  # Turn on interactive mode
@@ -630,8 +845,12 @@ def main():
             planes = fetch_planes(*bounding_box(args.lat, args.lon, args.zoom), token_manager)
             print(f"{len(planes)} aircraft found: {', '.join([plane[1] or 'N/A' for plane in planes[:5]])}")
             
-            # Generate composite image
-            result = composite(base_map, planes, args.lat, args.lon, args.zoom)
+            # Generate one composite per cardinal direction, then assemble the hologram cross
+            comp_south = composite(map_south, planes, args.lat, args.lon, args.zoom, bearing=0)
+            comp_north = composite(map_north, planes, args.lat, args.lon, args.zoom, bearing=180)
+            comp_east  = composite(map_east,  planes, args.lat, args.lon, args.zoom, bearing=270)
+            comp_west  = composite(map_west,  planes, args.lat, args.lon, args.zoom, bearing=90)
+            result = create_hologram_cross(comp_south, comp_north, comp_east, comp_west)
             
             # Update display
             if img_display is None:
