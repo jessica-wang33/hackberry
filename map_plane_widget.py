@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 
 MAP_STYLE  = "dark-v11"   # streets-v12 | dark-v11 | outdoors-v12
 IMAGE_WIDTH = 800          # wide rectangle width in pixels
-IMAGE_HEIGHT = 500         # wide rectangle height in pixels
+IMAGE_HEIGHT = 600         # wide rectangle height in pixels
 SHADOW_OFFSET = 15         # pixels offset for shadow (higher = planes appear further up)
 ALTITUDE_SCALE = 0.1      # pixels per meter of altitude (0.15 = 150 pixels per 1000m, ~1500 pixels at cruising altitude)
 MAX_ALTITUDE = 5000       # maximum altitude in meters (cap for display, ~40,000 ft cruising)
@@ -227,7 +227,7 @@ def draw_connecting_line(draw: ImageDraw.ImageDraw, ground_pos: tuple[int, int],
     draw.line([ground_pos, plane_pos], fill=color, width=1)
 
 
-def create_plane_image(heading: float | None, callsign: str, size: int = 100):
+def create_plane_image(heading: float | None, callsign: str, size: int = 140):
     """Create a plane image on a transparent canvas.
     
     Returns:
@@ -442,7 +442,7 @@ def warp_to_trapezium(
     image,
     top_shrink,
     vertical_shift,
-    bowl_strength: float = 0.2,
+    bowl_strength: float = 0.5,
 ):
     """
     Warp an image into a curved trapezium.
@@ -506,22 +506,29 @@ def warp_to_trapezium(
         return warped
 
     x = np.linspace(-1.0, 1.0, w, dtype=np.float32)
-    y = np.linspace(-1.0, 1.0, h, dtype=np.float32)
-    x_grid, y_grid = np.meshgrid(x, y)
+    y_px = np.arange(h, dtype=np.float32)
+    x_grid, y_px_grid = np.meshgrid(x, y_px)
 
-    # Profile is 1 at center and 0 on the entire boundary.
-    # This keeps top/bottom/left/right edges fixed to avoid global shifting.
-    profile = np.clip((1.0 - x_grid * x_grid) * (1.0 - y_grid * y_grid), 0.0, 1.0)
+    # Build curvature in trapezium-local vertical coordinates so the far top
+    # edge (y = top_y) is exactly flat after warping.
+    denom = max(1.0, float(h - 1 - top_y))
+    y_panel = np.clip((y_px_grid - top_y) / denom, 0.0, 1.0)
 
-    y01 = (y_grid + 1.0) * 0.5
-    base_y = y01 * (h - 1)
+    # 0 at left/right boundaries and at panel top boundary.
+    # Bottom edge is intentionally allowed to curve to avoid extreme distortion.
+    x_profile = np.clip(1.0 - x_grid * x_grid, 0.0, 1.0)
+    y_profile = np.sqrt(y_panel)
+    profile = x_profile * y_profile
 
-    # remap() expects source coordinates. To make output look "lifted up"
-    # toward center, sample from slightly lower source rows near center.
+    base_y = y_px_grid
+
+    # remap() expects source coordinates. Positive displacement here produces
+    # upward curvature in output (requested direction).
+    # Do not clamp to the bottom row: that creates vertical streak artifacts.
     lift_px = bowl_strength * 0.22 * h * profile
 
     map_x = ((x_grid + 1.0) * 0.5 * (w - 1)).astype(np.float32)
-    map_y = np.clip(base_y + lift_px, 0, h - 1).astype(np.float32)
+    map_y = (base_y + lift_px).astype(np.float32)
 
     curved = cv2.remap(
         warped,
@@ -685,7 +692,7 @@ def composite(base_map: Image.Image, planes: list,
     # Apply trapezoid/curvature transformation parameters
     top_shrink = 0.3
     vertical_shift = 0.8
-    bowl_strength = 0.75
+    bowl_strength = 0.45
     
     h, w = img_array.shape[:2]
     
@@ -726,6 +733,13 @@ def composite(base_map: Image.Image, planes: list,
     # Convert warped map back to PIL Image
     warped_img = Image.fromarray(warped_map_array, 'RGBA')
     draw = ImageDraw.Draw(warped_img)
+    alpha_mask = np.array(warped_img)[..., 3]
+
+    def is_on_map(px: int, py: int) -> bool:
+        """True when a pixel lies on non-transparent warped map content."""
+        if px < 0 or py < 0 or px >= w or py >= h:
+            return False
+        return alpha_mask[py, px] > 10
     
     # Function to transform coordinates using only trapezium perspective.
     # The bowl warp is applied to the map texture only.
@@ -757,6 +771,8 @@ def composite(base_map: Image.Image, planes: list,
             if 0 <= x < IMAGE_WIDTH and 0 <= y < IMAGE_HEIGHT:
                 # Transform the ground position through perspective
                 ground_x, ground_y = transform_point(x, y_adjusted)
+                if not is_on_map(ground_x, ground_y):
+                    continue
                 # Adjust heading so the icon faces correctly on the rotated map
                 raw_heading = state[10]
                 adjusted_heading = ((raw_heading - bearing) % 360) if raw_heading is not None else None
