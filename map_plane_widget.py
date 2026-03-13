@@ -37,6 +37,8 @@ MAX_ALTITUDE = 5000       # maximum altitude in meters (cap for display, ~40,000
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 TOKEN_REFRESH_MARGIN = 30  # seconds before expiry to refresh
 
+MAP_REFETCH_THRESHOLD = 0.005  # degrees (~500 m at equator); pan beyond this to trigger a new tile fetch
+
 
 class TokenManager:
     """Manages OpenSky OAuth2 access tokens with automatic refresh."""
@@ -90,40 +92,26 @@ class TokenManager:
 
 def enhance_map(img: Image.Image) -> Image.Image:
     """Apply futuristic styling to the map: only highlight major roads and borders."""
-    # Convert to RGBA for processing
     img = img.convert("RGBA")
-    pixels = img.load()
-    width, height = img.size
-    
-    # Process each pixel to create minimal futuristic look
-    for y in range(height):
-        for x in range(width):
-            r, g, b, a = pixels[x, y]
-            
-            # Calculate brightness to determine feature importance
-            brightness = (r + g + b) / 3
-            
-            # Only highlight MAJOR roads and borders (very bright pixels)
-            if brightness > 50:  # Major roads and borders only
-                # Make major roads glow cyan/blue
-                contrast = 3.0
-                r = int(r * contrast * 0.2)  # Heavy reduce red
-                g = int(g * contrast * 0.5)  # Some green  
-                b = int(b * contrast * 1.0)  # Strong boost blue
-            else:  # Background - pure black
-                r = int(r * 0.05)
-                g = int(g * 0.05)
-                b = int(b * 0.05)
-            
-            # Clamp values
-            pixels[x, y] = (min(255, max(0, r)), 
-                           min(255, max(0, g)), 
-                           min(255, max(0, b)), a)
-    
-    # Apply slight sharpening to make major roads crisp
-    img = img.filter(ImageFilter.SHARPEN)
-    
-    return img.convert("RGB")
+    arr = np.array(img, dtype=np.float32)   # shape (H, W, 4)
+    r, g, b, a = arr[..., 0], arr[..., 1], arr[..., 2], arr[..., 3]
+
+    brightness = (r + g + b) / 3
+    bright = brightness > 50  # major roads / borders
+
+    out = np.zeros_like(arr)
+    # Bright pixels → cyan/blue glow
+    out[bright, 0] = np.clip(r[bright] * 0.6,  0, 255)
+    out[bright, 1] = np.clip(g[bright] * 1.5,  0, 255)
+    out[bright, 2] = np.clip(b[bright] * 3.0,  0, 255)
+    # Dark pixels → near-black background
+    out[~bright, 0] = np.clip(r[~bright] * 0.05, 0, 255)
+    out[~bright, 1] = np.clip(g[~bright] * 0.05, 0, 255)
+    out[~bright, 2] = np.clip(b[~bright] * 0.05, 0, 255)
+    out[..., 3] = a
+
+    result = Image.fromarray(out.astype(np.uint8), "RGBA")
+    return result.filter(ImageFilter.SHARPEN).convert("RGB")
 
 
 def fetch_map(lat: float, lon: float, zoom: int, token: str, bearing: float = 0) -> Image.Image:
@@ -793,6 +781,89 @@ def composite(base_map: Image.Image, planes: list,
     return warped_img
 
 
+def run(lat: float, lon: float, zoom: int, joystick=None):
+    """Main display loop.
+
+    Args:
+        lat, lon: Initial map centre coordinates.
+        zoom:     Mapbox zoom level.
+        joystick: Optional Joystick instance.  If None, the map stays fixed.
+    """
+    load_dotenv()
+    token = os.getenv("MAPBOX_TOKEN")
+    token_manager = TokenManager(os.getenv("clientId"), os.getenv("clientSecret"))
+
+    plt.ion()
+    fig = plt.figure(figsize=(14, 10))
+    ax = fig.add_subplot(111)
+    ax.axis('off')
+    fig.patch.set_facecolor('black')
+    fig.tight_layout(pad=0)
+
+    mng = plt.get_current_fig_manager()
+    try:
+        mng.frame.Maximize(True)
+    except Exception:
+        try:
+            mng.window.showMaximized()
+        except Exception:
+            pass
+
+    plt.show()
+
+    POLL_HZ = 10          # joystick poll rate (Hz)
+    PLANE_INTERVAL = 5.0  # seconds between OpenSky fetches
+
+    maps = None
+    last_map_lat = last_map_lon = None
+    img_display = None
+
+    try:
+        while True:
+            # Re-fetch map tiles when the centre has moved beyond the threshold (or on first run)
+            if maps is None or (
+                abs(lat - last_map_lat) > MAP_REFETCH_THRESHOLD
+                or abs(lon - last_map_lon) > MAP_REFETCH_THRESHOLD
+            ):
+                print(f"Fetching maps for ({lat:.4f}, {lon:.4f})…")
+                maps = {
+                    0:   fetch_map(lat, lon, zoom, token, bearing=0),
+                    180: fetch_map(lat, lon, zoom, token, bearing=180),
+                    270: fetch_map(lat, lon, zoom, token, bearing=270),
+                    90:  fetch_map(lat, lon, zoom, token, bearing=90),
+                }
+                last_map_lat, last_map_lon = lat, lon
+
+            print("Fetching planes…")
+            planes = fetch_planes(*bounding_box(lat, lon, zoom), token_manager)
+            print(f"{len(planes)} aircraft found: {', '.join([p[1] or 'N/A' for p in planes[:5]])}")
+
+            comp_south = composite(maps[0],   planes, lat, lon, zoom, bearing=0)
+            comp_north = composite(maps[180],  planes, lat, lon, zoom, bearing=180)
+            comp_east  = composite(maps[270],  planes, lat, lon, zoom, bearing=270)
+            comp_west  = composite(maps[90],   planes, lat, lon, zoom, bearing=90)
+            result = create_hologram_cross(comp_south, comp_north, comp_east, comp_west)
+
+            if img_display is None:
+                img_display = ax.imshow(np.array(result))
+            else:
+                img_display.set_data(np.array(result))
+            plt.draw()
+
+            # Poll joystick at POLL_HZ while waiting for the next plane fetch
+            ticks = int(PLANE_INTERVAL * POLL_HZ)
+            for _ in range(ticks):
+                if joystick is not None:
+                    dlon, dlat = joystick.get_pan_delta()
+                    lat  += dlat
+                    lon  += dlon
+                plt.pause(1.0 / POLL_HZ)
+
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        plt.close()
+
+
 def main():
     load_dotenv()
     parser = argparse.ArgumentParser(description="Plane tracker")
@@ -800,70 +871,7 @@ def main():
     parser.add_argument("--lon",  type=float, default=-87.904724, help="Center longitude")
     parser.add_argument("--zoom", type=int,   default=11,        help="Zoom level (1-12)")
     args = parser.parse_args()
-
-    token = os.getenv("MAPBOX_TOKEN")
-    
-    # Initialize OpenSky token manager
-    client_id = os.getenv("clientId")
-    client_secret = os.getenv("clientSecret")
-    token_manager = TokenManager(client_id, client_secret)
-    
-    # Fetch one map per cardinal direction (bearings stay fixed, only plane data changes)
-    print("Fetching maps…")
-    map_south = fetch_map(args.lat, args.lon, args.zoom, token, bearing=0)
-    map_north = fetch_map(args.lat, args.lon, args.zoom, token, bearing=180)
-    map_east  = fetch_map(args.lat, args.lon, args.zoom, token, bearing=270)
-    map_west  = fetch_map(args.lat, args.lon, args.zoom, token, bearing=90)
-    
-    # Setup matplotlib for live updates with maximized window
-    plt.ion()  # Turn on interactive mode
-    # Create figure with moderate size
-    fig = plt.figure(figsize=(14, 10))  # Reduced from 20x14 for smaller cross
-    ax = fig.add_subplot(111)
-    ax.axis('off')
-    fig.patch.set_facecolor('black')
-    fig.tight_layout(pad=0)  # Remove padding
-    
-    # Try to maximize window
-    mng = plt.get_current_fig_manager()
-    try:
-        mng.frame.Maximize(True)  # wxPython
-    except:
-        try:
-            mng.window.showMaximized()  # Qt
-        except:
-            pass  # Fallback: just use the large figsize
-    
-    plt.show()
-    
-    img_display = None
-    
-    try:
-        while True:
-            # Fetch plane data
-            print("Fetching planes…")
-            planes = fetch_planes(*bounding_box(args.lat, args.lon, args.zoom), token_manager)
-            print(f"{len(planes)} aircraft found: {', '.join([plane[1] or 'N/A' for plane in planes[:5]])}")
-            
-            # Generate one composite per cardinal direction, then assemble the hologram cross
-            comp_south = composite(map_south, planes, args.lat, args.lon, args.zoom, bearing=0)
-            comp_north = composite(map_north, planes, args.lat, args.lon, args.zoom, bearing=180)
-            comp_east  = composite(map_east,  planes, args.lat, args.lon, args.zoom, bearing=270)
-            comp_west  = composite(map_west,  planes, args.lat, args.lon, args.zoom, bearing=90)
-            result = create_hologram_cross(comp_south, comp_north, comp_east, comp_west)
-            
-            # Update display
-            if img_display is None:
-                img_display = ax.imshow(np.array(result))
-            else:
-                img_display.set_data(np.array(result))
-            
-            plt.draw()
-            plt.pause(5.0)  # Wait 5 seconds before next update
-            
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-        plt.close()
+    run(lat=args.lat, lon=args.lon, zoom=args.zoom)
 
 
 if __name__ == "__main__":
