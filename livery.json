@@ -1,0 +1,195 @@
+{
+  "brands": {
+    "AMERICAN": {
+      "name": "American Airlines",
+      "colors": {
+        "primary": [0, 53, 149],
+        "secondary": [190, 10, 48],
+        "accent": [167, 169, 172]
+      }
+    },
+    "UNITED": {
+      "name": "United Airlines",
+      "colors": {
+        "primary": [0, 34, 101],
+        "secondary": [0, 92, 184],
+        "accent": [107, 117, 126]
+      }
+    },
+    "DELTA": {
+      "name": "Delta Air Lines",
+      "colors": {
+        "primary": [224, 0, 52],
+        "secondary": [0, 50, 100],
+        "accent": [184, 185, 188]
+      }
+    },
+    "ALASKA": {
+      "name": "Alaska Airlines",
+      "colors": {
+        "primary": [0, 66, 95],
+        "secondary": [0, 133, 161],
+        "accent": [129, 204, 219]
+      }
+    },
+    "COPA": {
+      "name": "Copa Airlines",
+      "colors": {
+        "primary": [0, 56, 147],
+        "secondary": [255, 255, 255],
+        "accent": [170, 178, 190]
+      }
+    },
+    "UPS": {
+      "name": "UPS Airlines",
+      "colors": {
+        "primary": [54, 38, 30],
+        "secondary": [160, 127, 84],
+        "accent": [245, 220, 170]
+      }
+    },
+    "KALITTA": {
+      "name": "Kalitta Air",
+      "colors": {
+        "primary": [18, 18, 18],
+        "secondary": [198, 161, 91],
+        "accent": [230, 230, 230]
+      }
+    },
+    "SINGAPORE": {
+      "name": "Singapore Airlines",
+      "colors": {
+        "primary": [29, 72, 134],
+        "secondary": [252, 177, 48],
+        "accent": [255, 255, 255]
+      }
+    },
+    "CHINA_EASTERN": {
+      "name": "China Eastern",
+      "colors": {
+        "primary": [11, 51, 147],
+        "secondary": [215, 8, 25],
+        "accent": [255, 255, 255]
+      }
+    },
+    "AIR_CHINA": {
+      "name": "Air China",
+      "colors": {
+        "primary": [198, 12, 48],
+        "secondary": [255, 204, 0],
+        "accent": [255, 255, 255]
+      }
+    },
+    "ASIANA": {
+      "name": "Asiana Airlines",
+      "colors": {
+        "primary": [116, 115, 115],
+        "secondary": [229, 24, 32],
+        "accent": [252, 202, 0]
+      }
+    },
+    "THAI": {
+      "name": "Thai Airways",
+      "colors": {
+        "primary": [82, 35, 128],
+        "secondary": [201, 168, 70],
+        "accent": [255, 255, 255]
+      }
+    },
+    "QANTAS": {
+      "name": "Qantas",
+      "colors": {
+        "primary": [227, 25, 55],
+        "secondary": [255, 255, 255],
+        "accent": [60, 60, 60]
+      }
+    },
+    "AIRASIA_X": {
+      "name": "AirAsia X",
+      "colors": {
+        "primary": [219, 0, 17],
+        "secondary": [255, 255, 255],
+        "accent": [40, 40, 40]
+      }
+    },
+    "TIGERAIR": {
+      "name": "Tigerair Taiwan",
+      "colors": {
+        "primary": [247, 148, 30],
+        "secondary": [36, 36, 36],
+        "accent": [255, 255, 255]
+      }
+    },
+    "BATIK": {
+      "name": "Batik Air",
+      "colors": {
+        "primary": [0, 27, 148],
+        "secondary": [166, 78, 0],
+        "accent": [251, 216, 117]
+      }
+    },
+    "FRONTIER": {
+      "name": "Frontier Airlines",
+      "colors": {
+        "primary": [0, 102, 71],
+        "secondary": [173, 210, 54],
+        "accent": [50, 50, 50]
+      }
+    },
+    "SOUTHWEST": {
+      "name": "Southwest Airlines",
+      "colors": {
+        "primary": [48, 66, 146],
+        "secondary": [237, 30, 36],
+        "accent": [255, 191, 0]
+      }
+    },
+    "VOLARIS": {
+      "name": "Volaris",
+      "colors": {
+        "primary": [190, 15, 120],
+        "secondary": [0, 0, 0],
+        "accent": [255, 255, 255]
+      }
+    },
+    "GENERAL_AVIATION": {
+      "name": "Private/Unlisted",
+      "colors": {
+        "primary": [150, 150, 150],
+        "secondary": [255, 255, 255],
+        "accent": [0, 0, 0]
+      }
+    }
+  },
+  "operators": {
+    "AAL": "AMERICAN",
+    "ENY": "AMERICAN",
+    "UAL": "UNITED",
+    "DAL": "DELTA",
+    "SIA": "SINGAPORE",
+    "CES": "CHINA_EASTERN",
+    "CCA": "AIR_CHINA",
+    "AAR": "ASIANA",
+    "THA": "THAI",
+    "QFA": "QANTAS",
+    "AXM": "AIRASIA_X",
+    "TGW": "TIGERAIR",
+    "BTK": "BATIK",
+    "FFT": "FRONTIER",
+    "VOI": "VOLARIS",
+    "SKW": "UNITED",
+    "RPA": "AMERICAN",
+    "EDV": "DELTA",
+    "JIA": "AMERICAN",
+    "ASA": "ALASKA",
+    "CMP": "COPA",
+    "UPS": "UPS",
+    "CKS": "KALITTA",
+    "DCM": "GENERAL_AVIATION",
+    "SWA": "SOUTHWEST",
+    "AAY": "GENERAL_AVIATION",
+    "GTI": "GENERAL_AVIATION",
+    "N74": "GENERAL_AVIATION",
+    "N/A": "GENERAL_AVIATION"
+  }
+}

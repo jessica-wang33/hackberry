@@ -14,10 +14,12 @@ Requirements:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import time
 from io import BytesIO
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -31,13 +33,35 @@ MAP_STYLE  = "dark-v11"   # streets-v12 | dark-v11 | outdoors-v12
 IMAGE_WIDTH = 800          # wide rectangle width in pixels
 IMAGE_HEIGHT = 500         # wide rectangle height in pixels
 SHADOW_OFFSET = 15         # pixels offset for shadow (higher = planes appear further up)
-ALTITUDE_SCALE = 0.05      # pixels per meter of altitude (0.15 = 150 pixels per 1000m, ~1500 pixels at cruising altitude)
+ALTITUDE_SCALE = 0.1      # pixels per meter of altitude (0.15 = 150 pixels per 1000m, ~1500 pixels at cruising altitude)
 MAX_ALTITUDE = 5000       # maximum altitude in meters (cap for display, ~40,000 ft cruising)
 
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 TOKEN_REFRESH_MARGIN = 30  # seconds before expiry to refresh
 
 MAP_REFETCH_THRESHOLD = 0.005  # degrees (~500 m at equator); pan beyond this to trigger a new tile fetch
+
+DEFAULT_AIRLINE_COLORS = ((255, 255, 255), (200, 200, 200), (150, 150, 150))
+
+
+_LIVERY_CACHE: dict | None = None
+
+
+def _load_livery_data() -> dict:
+    """Load livery data from livery.json once per process run."""
+    global _LIVERY_CACHE
+    if _LIVERY_CACHE is not None:
+        return _LIVERY_CACHE
+
+    livery_path = Path(__file__).with_name("livery.json")
+    try:
+        with livery_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+            _LIVERY_CACHE = data if isinstance(data, dict) else {}
+    except Exception:
+        _LIVERY_CACHE = {}
+
+    return _LIVERY_CACHE
 
 
 class TokenManager:
@@ -170,73 +194,30 @@ def geo_to_pixel(lon: float, lat: float,
 def get_airline_color(callsign: str) -> tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]:
     """Get color scheme (primary, secondary1, secondary2) based on airline from callsign prefix."""
     if not callsign:
-        return ((255, 255, 255), (200, 200, 200), (150, 150, 150))  # White for unknown
-    
-    # Extract airline code (usually first 3 characters)
+        return DEFAULT_AIRLINE_COLORS
+
+    livery = _load_livery_data()
+    operators = livery.get("operators", {})
+    brands = livery.get("brands", {})
+
     prefix = callsign[:3].upper()
-    
-    # Airline color mapping (ICAO code prefix -> (primary, secondary1, secondary2))
-    airline_colors = {
-        # US Airlines
-        'AAL': ((0, 53, 149), (190, 10, 48), (167, 169, 172)),      # American - Blue, Red, Shadow Gray
-        'UAL': ((0, 34, 101), (0, 92, 184), (107, 117, 126)),      # United - Blue Sphere, Rhapsody Blue, Sky Gray
-        'DAL': ((224, 0, 52), (0, 50, 100), (184, 185, 188)),      # Delta - Red, Dark Blue, Silver
-        'SWA': ((48, 71, 142), (245, 184, 0), (180, 49, 35)),       # Southwest - Bold Blue, Sunrise Yellow, Warm Red
-        'JBU': ((0, 32, 91), (0, 156, 222), (255, 255, 255)),      # JetBlue - Midnight Blue, Bluebird, White
-        'ASA': ((0, 66, 95), (0, 133, 161), (129, 204, 219)),      # Alaska - Midnight Blue, Tropical Blue, Breezy Blue
-        'FFT': ((0, 102, 71), (173, 210, 54), (50, 50, 50)),       # Frontier - Frontier Green, Lime, Dark Gray
-        'NKS': ((255, 236, 0), (0, 0, 0), (255, 255, 255)),        # Spirit - Yellow, Black, White
-        
-        # European Airlines
-        'BAW': ((7, 34, 103), (235, 30, 35), (255, 255, 255)),     # British Airways - Blue, Red, White
-        'RYR': ((0, 51, 153), (241, 194, 0), (255, 255, 255)),     # Ryanair - Blue, Yellow, White
-        'EZY': ((255, 102, 0), (255, 255, 255), (51, 51, 51)),     # EasyJet - Orange, White, Dark Grey
-        'DLH': ((0, 47, 95), (247, 168, 27), (255, 255, 255)),     # Lufthansa - Navy Blue, Deep Yellow, White
-        'AFR': ((0, 35, 119), (237, 27, 46), (255, 255, 255)),     # Air France - Blue, Red, White
-        'KLM': ((0, 161, 222), (0, 49, 117), (255, 255, 255)),     # KLM - Sky Blue, Dark Blue, White
-        'IBE': ((181, 16, 26), (250, 175, 5), (255, 255, 255)),    # Iberia - Red, Yellow, White
-        'AZA': ((0, 104, 71), (196, 18, 48), (255, 255, 255)),     # Alitalia - Green, Red, White
-        
-        # Asian Airlines
-        'ANA': ((0, 49, 134), (0, 160, 223), (255, 255, 255)),     # ANA - Tritone Blue, Light Blue, White
-        'JAL': ((217, 0, 19), (0, 0, 0), (255, 255, 255)),         # Japan Airlines - Red, Black, White
-        'CPA': ((0, 101, 114), (255, 255, 255), (163, 171, 175)),  # Cathay Pacific - Brushwing Green, White, Gray
-        'SIA': ((0, 51, 102), (255, 165, 0), (255, 255, 255)),     # Singapore - Dark Blue, Gold, White
-        'THA': ((78, 35, 126), (241, 181, 21), (189, 0, 119)),     # Thai - Royal Purple, Gold, Magenta
-        'QTR': ((141, 20, 59), (91, 94, 98), (255, 255, 255)),     # Qatar - Maroon, Gray, White
-        'UAE': ((186, 151, 93), (255, 0, 0), (0, 0, 0)),           # Emirates - Gold, Red, Black
-        'ETD': ((197, 160, 93), (35, 31, 32), (255, 255, 255)),    # Etihad - Desert Gold, Carbon, White
-        
-        # Other major airlines
-        'QFA': ((228, 0, 43), (0, 0, 0), (255, 255, 255)),         # Qantas - Red, Black, White
-        'ACA': ((0, 0, 0), (216, 12, 45), (255, 255, 255)),        # Air Canada - Black, Red, White
-        'AMX': ((13, 35, 64), (220, 24, 45), (167, 169, 172)),     # Aeromexico - Dark Blue, Red, Silver
-        'TAM': ((15, 30, 80), (230, 0, 40), (145, 155, 165)),      # LATAM - Indigo, Coral, Gray
-    }
-    
-    # Check full prefix match
-    if prefix in airline_colors:
-        return airline_colors[prefix]
-    
-    # Check 2-letter prefix for some airlines
-    prefix2 = callsign[:2].upper()
-    if prefix2 in airline_colors:
-        return airline_colors[prefix2]
-    
-    # Default colors based on hash for variety
-    hash_val = hash(prefix) % 360
-    import colorsys
-    r, g, b = colorsys.hsv_to_rgb(hash_val / 360, 0.8, 0.9)
-    primary = (int(r * 255), int(g * 255), int(b * 255))
-    
-    # Generate complementary colors
-    r2, g2, b2 = colorsys.hsv_to_rgb((hash_val + 120) % 360 / 360, 0.7, 0.85)
-    secondary1 = (int(r2 * 255), int(g2 * 255), int(b2 * 255))
-    
-    r3, g3, b3 = colorsys.hsv_to_rgb((hash_val + 240) % 360 / 360, 0.6, 0.8)
-    secondary2 = (int(r3 * 255), int(g3 * 255), int(b3 * 255))
-    
-    return (primary, secondary1, secondary2)
+    brand_key = operators.get(prefix) or operators.get(callsign[:2].upper())
+    if not brand_key:
+        return DEFAULT_AIRLINE_COLORS
+
+    brand = brands.get(brand_key, {})
+    colors = brand.get("colors", {})
+
+    try:
+        primary = tuple(colors.get("primary", DEFAULT_AIRLINE_COLORS[0]))
+        secondary = tuple(colors.get("secondary", DEFAULT_AIRLINE_COLORS[1]))
+        accent = tuple(colors.get("accent", DEFAULT_AIRLINE_COLORS[2]))
+        if len(primary) == 3 and len(secondary) == 3 and len(accent) == 3:
+            return primary, secondary, accent
+    except Exception:
+        pass
+
+    return DEFAULT_AIRLINE_COLORS
 
 
 def draw_connecting_line(draw: ImageDraw.ImageDraw, ground_pos: tuple[int, int], 
@@ -457,17 +438,28 @@ def draw_plane_warped(base_img: Image.Image, x: int, y: int,
     return primary_color
 
 
-def warp_to_trapezium(image, top_shrink, vertical_shift):
+def warp_to_trapezium(
+    image,
+    top_shrink,
+    vertical_shift,
+    bowl_strength: float = 0.2,
+):
     """
-    Warps an image so it looks like it is viewed from the side.
+    Warp an image into a curved trapezium.
+
+    This first applies a standard perspective trapezium warp, then applies a
+    paraboloid-style vertical displacement where the 4 corners remain fixed
+    and the interior lifts toward the center.
 
     Parameters
     ----------
     image : numpy array (OpenCV image)
     top_shrink : float
-        How narrow the top becomes (0.5–0.8 works well)
+        How narrow the top becomes (0.5-0.8 works well).
     vertical_shift : float
-        How much the top edge moves downward
+        How much the top edge moves downward.
+    bowl_strength : float
+        Strength of center lift. 0 gives a flat trapezium.
 
     Returns
     -------
@@ -504,12 +496,43 @@ def warp_to_trapezium(image, top_shrink, vertical_shift):
     # compute perspective transform
     matrix = cv2.getPerspectiveTransform(src, dst)
 
-    # Warp with transparent background
+    # Stage 1: flat trapezium warp with transparent background
     warped = cv2.warpPerspective(image, matrix, (w, h), 
                                   borderMode=cv2.BORDER_CONSTANT,
                                   borderValue=(0, 0, 0, 0))
 
-    return warped
+    # Stage 2: paraboloid lift with fixed corners.
+    if bowl_strength <= 0:
+        return warped
+
+    x = np.linspace(-1.0, 1.0, w, dtype=np.float32)
+    y = np.linspace(-1.0, 1.0, h, dtype=np.float32)
+    x_grid, y_grid = np.meshgrid(x, y)
+
+    # Profile is 1 at center and 0 on the entire boundary.
+    # This keeps top/bottom/left/right edges fixed to avoid global shifting.
+    profile = np.clip((1.0 - x_grid * x_grid) * (1.0 - y_grid * y_grid), 0.0, 1.0)
+
+    y01 = (y_grid + 1.0) * 0.5
+    base_y = y01 * (h - 1)
+
+    # remap() expects source coordinates. To make output look "lifted up"
+    # toward center, sample from slightly lower source rows near center.
+    lift_px = bowl_strength * 0.22 * h * profile
+
+    map_x = ((x_grid + 1.0) * 0.5 * (w - 1)).astype(np.float32)
+    map_y = np.clip(base_y + lift_px, 0, h - 1).astype(np.float32)
+
+    curved = cv2.remap(
+        warped,
+        map_x,
+        map_y,
+        interpolation=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0),
+    )
+
+    return curved
 
 
 def draw_compass(img: Image.Image, bearing: float) -> Image.Image:
@@ -659,9 +682,10 @@ def composite(base_map: Image.Image, planes: list,
     # Convert to numpy and warp ONLY the map to trapezoid
     img_array = np.array(expanded_img)
     
-    # Apply trapezoid perspective transformation parameters
+    # Apply trapezoid/curvature transformation parameters
     top_shrink = 0.3
     vertical_shift = 0.8
+    bowl_strength = 0.75
     
     h, w = img_array.shape[:2]
     
@@ -691,21 +715,28 @@ def composite(base_map: Image.Image, planes: list,
     # Get the perspective transformation matrix
     matrix = cv2.getPerspectiveTransform(src, dst)
     
-    # Warp the map
-    warped_map_array = cv2.warpPerspective(img_array, matrix, (w, h), 
-                                           borderMode=cv2.BORDER_CONSTANT,
-                                           borderValue=(0, 0, 0, 0))
+    # Warp the map using the same curved trapezium function used elsewhere.
+    warped_map_array = warp_to_trapezium(
+        img_array,
+        top_shrink=top_shrink,
+        vertical_shift=vertical_shift,
+        bowl_strength=bowl_strength,
+    )
     
     # Convert warped map back to PIL Image
     warped_img = Image.fromarray(warped_map_array, 'RGBA')
     draw = ImageDraw.Draw(warped_img)
     
-    # Function to transform coordinates using the perspective matrix
+    # Function to transform coordinates using only trapezium perspective.
+    # The bowl warp is applied to the map texture only.
     def transform_point(x, y):
-        """Transform a point through the perspective matrix."""
+        """Transform a point through perspective only."""
         pt = np.array([[[x, y]]], dtype=np.float32)
         transformed = cv2.perspectiveTransform(pt, matrix)
-        return int(transformed[0][0][0]), int(transformed[0][0][1])
+        px = float(transformed[0][0][0])
+        py = float(transformed[0][0][1])
+
+        return int(px), int(py)
     
     # Store plane data for two-pass rendering (no shadows)
     plane_data = []
@@ -836,7 +867,7 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
 
             print("Fetching planes…")
             planes = fetch_planes(*bounding_box(lat, lon, zoom), token_manager)
-            print(f"{len(planes)} aircraft found: {', '.join([p[1] or 'N/A' for p in planes[:5]])}")
+            print(f"{len(planes)} aircraft found: {', '.join([p[1] or 'N/A' for p in planes[:60]])}")
 
             comp_south = composite(maps[0],   planes, lat, lon, zoom, bearing=0)
             comp_north = composite(maps[180],  planes, lat, lon, zoom, bearing=180)
@@ -857,7 +888,7 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
                     dlon, dlat = joystick.get_pan_delta()
                     lat  += dlat
                     lon  += dlon
-                plt.pause(1.0 / POLL_HZ)
+                plt.pause(5.0 / POLL_HZ)
 
     except KeyboardInterrupt:
         print("\nShutting down...")
