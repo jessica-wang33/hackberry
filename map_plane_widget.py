@@ -33,7 +33,7 @@ MAP_STYLE  = "dark-v11"   # streets-v12 | dark-v11 | outdoors-v12
 IMAGE_WIDTH = 800          # wide rectangle width in pixels
 IMAGE_HEIGHT = 600         # wide rectangle height in pixels
 SHADOW_OFFSET = 15         # pixels offset for shadow (higher = planes appear further up)
-ALTITUDE_SCALE = 0.1      # pixels per meter of altitude (0.15 = 150 pixels per 1000m, ~1500 pixels at cruising altitude)
+ALTITUDE_SCALE = 0.075      # pixels per meter of altitude (0.15 = 150 pixels per 1000m, ~1500 pixels at cruising altitude)
 MAX_ALTITUDE = 5000       # maximum altitude in meters (cap for display, ~40,000 ft cruising)
 
 TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
@@ -1080,7 +1080,7 @@ def main():
     parser = argparse.ArgumentParser(description="Plane tracker")
     parser.add_argument("--lat",  type=float, default=41.978611, help="Center latitude")
     parser.add_argument("--lon",  type=float, default=-87.904724, help="Center longitude")
-    parser.add_argument("--zoom", type=int,   default=11,        help="Zoom level (1-12)")
+    parser.add_argument("--zoom", type=int,   default=9,        help="Zoom level (1-12)")
     args = parser.parse_args()
     run(lat=args.lat, lon=args.lon, zoom=args.zoom)
 
