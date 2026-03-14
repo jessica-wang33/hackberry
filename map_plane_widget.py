@@ -44,6 +44,17 @@ MAP_REFETCH_THRESHOLD = 0.005  # degrees (~500 m at equator); pan beyond this to
 DEFAULT_AIRLINE_COLORS = ((255, 255, 255), (200, 200, 200), (150, 150, 150))
 
 
+WORLD_MAP_POLYGONS = (
+    [(-168, 72), (-145, 70), (-125, 58), (-110, 50), (-103, 25), (-117, 14), (-102, 8), (-85, 16), (-78, 27), (-66, 45), (-76, 60), (-98, 70), (-132, 75)],
+    [(-81, 12), (-72, 8), (-64, -4), (-60, -18), (-52, -34), (-58, -52), (-70, -55), (-79, -30), (-81, -8)],
+    [(-55, 80), (-34, 78), (-20, 72), (-30, 60), (-48, 58), (-60, 68)],
+    [(-12, 72), (18, 70), (60, 65), (92, 70), (132, 60), (158, 52), (166, 40), (142, 30), (122, 19), (106, 8), (80, 10), (70, 24), (50, 31), (36, 43), (20, 46), (8, 56), (-4, 60)],
+    [(-18, 36), (2, 38), (22, 31), (35, 22), (45, 8), (42, -18), (28, -35), (12, -35), (-2, -24), (-10, -4)],
+    [(110, -10), (154, -10), (152, -36), (132, -43), (113, -30)],
+    [(-180, -70), (180, -70), (180, -84), (-180, -84)],
+)
+
+
 _LIVERY_CACHE: dict | None = None
 
 
@@ -609,8 +620,126 @@ def draw_compass(img: Image.Image, bearing: float) -> Image.Image:
     return img
 
 
+def format_coordinate(value: float, positive: str, negative: str) -> str:
+    """Format a coordinate with hemisphere suffix."""
+    hemisphere = positive if value >= 0 else negative
+    return f"{abs(value):.4f}° {hemisphere}"
+
+
+def world_to_panel_pixel(lon: float, lat: float,
+                         left: int, top: int, width: int, height: int) -> tuple[int, int]:
+    """Map lon/lat to an equirectangular panel coordinate."""
+    x = left + int(((lon + 180.0) / 360.0) * width)
+    y = top + int(((90.0 - lat) / 180.0) * height)
+    return x, y
+
+
+def create_location_panel(lat: float, lon: float, blink_on: bool,
+                          width: int = 360, height: int = 170) -> Image.Image:
+    """Render a location HUD with coordinates and a world-position inset."""
+    panel = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(panel)
+
+    draw.rounded_rectangle(
+        [(0, 0), (width - 1, height - 1)],
+        radius=22,
+        fill=(6, 12, 20, 210),
+        outline=(40, 215, 255, 180),
+        width=2,
+    )
+
+    coordinate_text = (
+        f"lat: {format_coordinate(lat, 'N', 'S')}, "
+        f"lon: {format_coordinate(lon, 'E', 'W')}"
+    )
+    text_bbox = draw.textbbox((0, 0), coordinate_text, stroke_width=2)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_x = max(12, (width - text_width) // 2)
+    draw.text((text_x, 18), coordinate_text, fill=(230, 244, 255), stroke_fill=(0, 0, 0), stroke_width=2)
+
+    map_left = 18
+    map_top = 52
+    map_width = width - 36
+    map_height = height - map_top - 18
+    map_right = map_left + map_width
+    map_bottom = map_top + map_height
+
+    draw.rounded_rectangle(
+        [(map_left, map_top), (map_right, map_bottom)],
+        radius=16,
+        fill=(8, 22, 34, 255),
+        outline=(40, 120, 150, 180),
+        width=1,
+    )
+
+    for meridian in range(-120, 181, 60):
+        x, _ = world_to_panel_pixel(meridian, 0, map_left, map_top, map_width, map_height)
+        draw.line([(x, map_top + 1), (x, map_bottom - 1)], fill=(28, 58, 78, 180), width=1)
+    for parallel in (-60, -30, 0, 30, 60):
+        _, y = world_to_panel_pixel(0, parallel, map_left, map_top, map_width, map_height)
+        draw.line([(map_left + 1, y), (map_right - 1, y)], fill=(28, 58, 78, 180), width=1)
+
+    for polygon in WORLD_MAP_POLYGONS:
+        points = [world_to_panel_pixel(poly_lon, poly_lat, map_left, map_top, map_width, map_height)
+                  for poly_lon, poly_lat in polygon]
+        draw.polygon(points, fill=(22, 130, 160, 255), outline=(70, 220, 255, 120))
+
+    dot_x, dot_y = world_to_panel_pixel(lon, lat, map_left, map_top, map_width, map_height)
+    outer_radius = 8 if blink_on else 5
+    inner_radius = 4 if blink_on else 2
+    draw.ellipse(
+        [(dot_x - outer_radius, dot_y - outer_radius), (dot_x + outer_radius, dot_y + outer_radius)],
+        outline=(255, 60, 60, 240),
+        width=2,
+    )
+    if blink_on:
+        draw.ellipse(
+            [(dot_x - inner_radius, dot_y - inner_radius), (dot_x + inner_radius, dot_y + inner_radius)],
+            fill=(255, 40, 40, 255),
+        )
+    else:
+        draw.ellipse(
+            [(dot_x - inner_radius, dot_y - inner_radius), (dot_x + inner_radius, dot_y + inner_radius)],
+            fill=(110, 0, 0, 255),
+        )
+
+    label_x = min(max(dot_x + 10, map_left + 8), map_right - 82)
+    label_y = max(dot_y - 18, map_top + 6)
+    draw.rounded_rectangle(
+        [(label_x, label_y), (label_x + 72, label_y + 18)],
+        radius=8,
+        fill=(0, 0, 0, 190),
+        outline=(255, 60, 60, 120),
+        width=1,
+    )
+    draw.text((label_x + 8, label_y + 3), "LIVE MAP", fill=(255, 180, 180))
+
+    return panel
+
+
+def add_location_overlay(base_img: Image.Image, lat: float, lon: float, blink_on: bool) -> Image.Image:
+    """Add coordinate and world-location HUD to the hologram cross image."""
+    base_rgba = base_img.convert('RGBA')
+    panel = create_location_panel(lat, lon, blink_on)
+    final = Image.new('RGBA', base_rgba.size, (0, 0, 0, 255))
+    final.paste(base_rgba, (0, 0), base_rgba)
+
+    panel_x = (base_rgba.width - panel.width) // 2
+    panel_y = (base_rgba.height - panel.height) // 2
+
+    shadow = Image.new('RGBA', panel.size, (0, 0, 0, 90))
+    final.paste(shadow, (panel_x + 3, panel_y + 3), shadow)
+    final.paste(panel, (panel_x, panel_y), panel)
+
+    output = Image.new('RGB', final.size, (0, 0, 0))
+    output.paste(final, (0, 0), final)
+    return output
+
+
 def create_hologram_cross(img_south: Image.Image, img_north: Image.Image,
-                          img_east: Image.Image, img_west: Image.Image) -> Image.Image:
+                          img_east: Image.Image, img_west: Image.Image,
+                          lat: float | None = None, lon: float | None = None,
+                          blink_on: bool = True) -> Image.Image:
     """
     Create a hologram cross layout using four directional map views.
 
@@ -670,6 +799,10 @@ def create_hologram_cross(img_south: Image.Image, img_north: Image.Image,
     # Composite onto black for final RGB output
     final = Image.new('RGB', (canvas_width, canvas_height), (0, 0, 0))
     final.paste(canvas, (0, 0), canvas)
+
+    if lat is not None and lon is not None:
+        return add_location_overlay(final, lat, lon, blink_on)
+
     return final
 
 
@@ -864,6 +997,8 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
     maps = None
     last_map_lat = last_map_lon = None
     img_display = None
+    comp_south = comp_north = comp_east = comp_west = None
+    last_overlay_state = None
 
     try:
         while True:
@@ -889,7 +1024,17 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
             comp_north = composite(maps[180],  planes, lat, lon, zoom, bearing=180)
             comp_east  = composite(maps[270],  planes, lat, lon, zoom, bearing=270)
             comp_west  = composite(maps[90],   planes, lat, lon, zoom, bearing=90)
-            result = create_hologram_cross(comp_south, comp_north, comp_east, comp_west)
+            blink_on = int(time.monotonic() * 2) % 2 == 0
+            result = create_hologram_cross(
+                comp_south,
+                comp_north,
+                comp_east,
+                comp_west,
+                lat=lat,
+                lon=lon,
+                blink_on=blink_on,
+            )
+            last_overlay_state = (round(lat, 5), round(lon, 5), blink_on)
 
             if img_display is None:
                 img_display = ax.imshow(np.array(result))
@@ -906,6 +1051,23 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
                     print(dlon, dlat)
                     lat  += dlat
                     lon  += dlon
+                blink_on = int(time.monotonic() * 2) % 2 == 0
+                overlay_state = (round(lat, 5), round(lon, 5), blink_on)
+                if overlay_state != last_overlay_state and all(
+                    panel is not None for panel in (comp_south, comp_north, comp_east, comp_west)
+                ):
+                    result = create_hologram_cross(
+                        comp_south,
+                        comp_north,
+                        comp_east,
+                        comp_west,
+                        lat=lat,
+                        lon=lon,
+                        blink_on=blink_on,
+                    )
+                    img_display.set_data(np.array(result))
+                    plt.draw()
+                    last_overlay_state = overlay_state
                 plt.pause(1.0 / POLL_HZ)
 
     except KeyboardInterrupt:
