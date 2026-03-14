@@ -18,6 +18,8 @@ import json
 import math
 import os
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 
@@ -1002,22 +1004,26 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
 
     try:
         while True:
-            # Re-fetch map tiles when the centre has moved beyond the threshold (or on first run)
-            if maps is None or (
+            need_new_maps = maps is None or (
                 abs(lat - last_map_lat) > MAP_REFETCH_THRESHOLD
                 or abs(lon - last_map_lon) > MAP_REFETCH_THRESHOLD
-            ):
-                print(f"Fetching maps for ({lat:.4f}, {lon:.4f})…")
-                maps = {
-                    0:   fetch_map(lat, lon, zoom, token, bearing=0),
-                    180: fetch_map(lat, lon, zoom, token, bearing=180),
-                    270: fetch_map(lat, lon, zoom, token, bearing=270),
-                    90:  fetch_map(lat, lon, zoom, token, bearing=90),
-                }
-                last_map_lat, last_map_lon = lat, lon
+            )
 
-            print("Fetching planes…")
-            planes = fetch_planes(*bounding_box(lat, lon, zoom), token_manager)
+            # Fetch map tiles and planes in parallel
+            with ThreadPoolExecutor() as executor:
+                planes_future = executor.submit(
+                    fetch_planes, *bounding_box(lat, lon, zoom), token_manager
+                )
+                if need_new_maps:
+                    print(f"Fetching maps for ({lat:.4f}, {lon:.4f})…")
+                    map_futures = {
+                        bearing: executor.submit(fetch_map, lat, lon, zoom, token, bearing=bearing)
+                        for bearing in (0, 90, 180, 270)
+                    }
+                    maps = {bearing: f.result() for bearing, f in map_futures.items()}
+                    last_map_lat, last_map_lon = lat, lon
+
+                planes = planes_future.result()
             print(f"{len(planes)} aircraft found: {', '.join([p[1] or 'N/A' for p in planes[:60]])}")
 
             comp_south = composite(maps[0],   planes, lat, lon, zoom, bearing=0)
