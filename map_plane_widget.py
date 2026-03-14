@@ -906,7 +906,7 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
                     print(dlon, dlat)
                     lat  += dlat
                     lon  += dlon
-                plt.pause(5.0 / POLL_HZ)
+                plt.pause(1.0 / POLL_HZ)
 
     except KeyboardInterrupt:
         print("\nShutting down...")
