@@ -45,7 +45,7 @@ class Joystick:
             max(-1.0, min(1.0, dy / scale)),
         )
 
-    def get_pan_delta(self, scale: float = 0.05) -> tuple[float, float]:
+    def get_pan_delta(self, scale: float = 1) -> tuple[float, float]:
         """Return (dlon, dlat) to add to current map centre each poll tick.
 
         scale=0.0005 at 10 Hz → full deflection ≈ 55 m/s at the equator,
