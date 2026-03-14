@@ -1002,7 +1002,7 @@ def _index():
     return '''<!DOCTYPE html>
 <html>
 <head><title>Plane Tracker</title>
-<style>body{margin:0;background:#000;overflow:hidden;}img{width:67%;margin:0 auto;height:auto;max-height:100vh;display:block;}</style>
+<style>body{margin:0;background:#000;overflow:hidden;}img{max-width:67%;max-height:100vh;width:auto;height:auto;margin:0 auto;display:block;}</style>
 </head>
 <body><img src="/stream"></body>
 </html>'''
