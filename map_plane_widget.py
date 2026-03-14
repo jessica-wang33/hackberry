@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 import requests
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
@@ -44,6 +44,10 @@ TOKEN_REFRESH_MARGIN = 30  # seconds before expiry to refresh
 MAP_REFETCH_THRESHOLD = 0.005  # degrees (~500 m at equator); pan beyond this to trigger a new tile fetch
 
 DEFAULT_AIRLINE_COLORS = ((255, 255, 255), (200, 200, 200), (150, 150, 150))
+LOCATION_PANEL_WIDTH = 360
+LOCATION_PANEL_HEIGHT = 170
+LOCATION_MAP_BOX_WIDTH = 324 # CHANGE THIS WHEN YOU GET MONITOR
+LOCATION_COORDINATE_FONT_SIZE = 20
 
 
 WORLD_MAP_POLYGONS = (
@@ -628,6 +632,11 @@ def format_coordinate(value: float, positive: str, negative: str) -> str:
     return f"{abs(value):.4f}° {hemisphere}"
 
 
+def load_ui_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    font_path = "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf"
+    return ImageFont.truetype(font_path, size=size)
+
+
 def world_to_panel_pixel(lon: float, lat: float,
                          left: int, top: int, width: int, height: int) -> tuple[int, int]:
     """Map lon/lat to an equirectangular panel coordinate."""
@@ -637,7 +646,9 @@ def world_to_panel_pixel(lon: float, lat: float,
 
 
 def create_location_panel(lat: float, lon: float, blink_on: bool,
-                          width: int = 360, height: int = 170) -> Image.Image:
+                          width: int = LOCATION_PANEL_WIDTH,
+                          height: int = LOCATION_PANEL_HEIGHT,
+                          map_box_width: int = LOCATION_MAP_BOX_WIDTH) -> Image.Image:
     """Render a location HUD with coordinates and a world-position inset."""
     panel = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(panel)
@@ -651,17 +662,25 @@ def create_location_panel(lat: float, lon: float, blink_on: bool,
     )
 
     coordinate_text = (
-        f"lat: {format_coordinate(lat, 'N', 'S')}, "
-        f"lon: {format_coordinate(lon, 'E', 'W')}"
+        f"LAT: {format_coordinate(lat, 'N', 'S')}, "
+        f"LON: {format_coordinate(lon, 'E', 'W')}"
     )
-    text_bbox = draw.textbbox((0, 0), coordinate_text, stroke_width=2)
+    coordinate_font = load_ui_font(LOCATION_COORDINATE_FONT_SIZE, bold=True)
+    text_bbox = draw.textbbox((0, 0), coordinate_text, font=coordinate_font, stroke_width=2)
     text_width = text_bbox[2] - text_bbox[0]
     text_x = max(12, (width - text_width) // 2)
-    draw.text((text_x, 18), coordinate_text, fill=(230, 244, 255), stroke_fill=(0, 0, 0), stroke_width=2)
+    draw.text(
+        (text_x, 14),
+        coordinate_text,
+        fill=(230, 244, 255),
+        font=coordinate_font,
+        stroke_fill=(0, 0, 0),
+        stroke_width=2,
+    )
 
-    map_left = 18
-    map_top = 52
-    map_width = width - 36
+    map_width = max(120, min(map_box_width, width - 36))
+    map_left = (width - map_width) // 2
+    map_top = 62
     map_height = height - map_top - 18
     map_right = map_left + map_width
     map_bottom = map_top + map_height
