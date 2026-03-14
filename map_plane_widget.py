@@ -1049,8 +1049,8 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
                     print("JOYSTICK CHANGE:")
                     dlon, dlat = joystick.get_pan_delta()
                     print(dlon, dlat)
-                    lat  += dlat
-                    lon  += dlon
+                    lat  = max(-90.0,  min(90.0,  lat + dlat))
+                    lon  = max(-180.0, min(180.0, lon + dlon))
                 blink_on = int(time.monotonic() * 2) % 2 == 0
                 overlay_state = (round(lat, 5), round(lon, 5), blink_on)
                 if overlay_state != last_overlay_state and all(
