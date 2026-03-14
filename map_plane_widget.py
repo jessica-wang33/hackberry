@@ -1004,7 +1004,7 @@ def _index():
 <head><title>Plane Tracker</title>
 <style>body{margin:0;background:#000;}img{width:100%;height:auto;display:block;}</style>
 </head>
-<body><img src="/stream"></body>
+<body><img src="/stream" style="width:67%;margin:0 auto;"></body>
 </html>'''
 
 
