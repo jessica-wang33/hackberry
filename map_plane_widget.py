@@ -901,7 +901,9 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
             ticks = int(PLANE_INTERVAL * POLL_HZ)
             for _ in range(ticks):
                 if joystick is not None:
+                    print("JOYSTICK CHANGE:")
                     dlon, dlat = joystick.get_pan_delta()
+                    print(dlon, dlat)
                     lat  += dlat
                     lon  += dlon
                 plt.pause(5.0 / POLL_HZ)

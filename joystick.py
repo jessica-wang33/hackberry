@@ -45,13 +45,15 @@ class Joystick:
             max(-1.0, min(1.0, dy / scale)),
         )
 
-    def get_pan_delta(self, scale: float = 0.0005) -> tuple[float, float]:
+    def get_pan_delta(self, scale: float = 0.05) -> tuple[float, float]:
         """Return (dlon, dlat) to add to current map centre each poll tick.
 
         scale=0.0005 at 10 Hz → full deflection ≈ 55 m/s at the equator,
         which feels responsive at zoom 11 (~100 m/pixel).
         Y axis is inverted: pushing up (ADC value decreases → dy < 0) → +lat (north).
         """
+        print("RAW JOYSTICK DEFLECTION:")
+        print(self.get_deflection())
         dx, dy = self.get_deflection()
         return dx * scale, -dy * scale
 
