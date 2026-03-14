@@ -992,7 +992,7 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
     plt.show()
 
     POLL_HZ = 10          # joystick poll rate (Hz)
-    PLANE_INTERVAL = 5.0  # seconds between OpenSky fetches
+    PLANE_INTERVAL = 1.0  # seconds between OpenSky fetches
 
     maps = None
     last_map_lat = last_map_lon = None
@@ -1068,7 +1068,7 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
                     img_display.set_data(np.array(result))
                     plt.draw()
                     last_overlay_state = overlay_state
-                plt.pause(1.0 / POLL_HZ)
+                plt.pause(PLANE_INTERVAL / POLL_HZ)
 
     except KeyboardInterrupt:
         print("\nShutting down...")
