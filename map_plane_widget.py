@@ -28,8 +28,8 @@ import numpy as np
 import requests
 from dotenv import load_dotenv
 from PIL import Image, ImageDraw, ImageFilter, ImageEnhance, ImageFont
-import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
+from flask import Flask, Response
 
 MAP_STYLE  = "dark-v11"   # streets-v12 | dark-v11 | outdoors-v12
 IMAGE_WIDTH = 800          # wide rectangle width in pixels
@@ -992,6 +992,43 @@ def composite(base_map: Image.Image, planes: list,
     return warped_img
 
 
+_app = Flask(__name__)
+_latest_jpeg: bytes | None = None
+_frame_lock = threading.Lock()
+
+
+@_app.route('/')
+def _index():
+    return '''<!DOCTYPE html>
+<html>
+<head><title>Plane Tracker</title>
+<style>body{margin:0;background:#000;}img{width:100%;height:auto;display:block;}</style>
+</head>
+<body><img src="/stream"></body>
+</html>'''
+
+
+@_app.route('/stream')
+def _stream():
+    def generate():
+        while True:
+            with _frame_lock:
+                frame = _latest_jpeg
+            if frame:
+                yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+            time.sleep(0.05)
+    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+def _start_webserver(host: str = '0.0.0.0', port: int = 8080) -> None:
+    t = threading.Thread(
+        target=lambda: _app.run(host=host, port=port, threaded=True),
+        daemon=True,
+    )
+    t.start()
+    print(f"Web server started — open http://<rpi-ip>:{port} on any device")
+
+
 def run(lat: float, lon: float, zoom: int, joystick=None):
     """Main display loop.
 
@@ -1000,34 +1037,19 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
         zoom:     Mapbox zoom level.
         joystick: Optional Joystick instance.  If None, the map stays fixed.
     """
+    global _latest_jpeg
+
     load_dotenv()
     token = os.getenv("MAPBOX_TOKEN")
     token_manager = TokenManager(os.getenv("clientId"), os.getenv("clientSecret"))
 
-    plt.ion()
-    fig = plt.figure(figsize=(14, 10))
-    ax = fig.add_subplot(111)
-    ax.axis('off')
-    fig.patch.set_facecolor('black')
-    fig.tight_layout(pad=0)
-
-    mng = plt.get_current_fig_manager()
-    try:
-        mng.frame.Maximize(True)
-    except Exception:
-        try:
-            mng.window.showMaximized()
-        except Exception:
-            pass
-
-    plt.show()
+    _start_webserver()
 
     POLL_HZ = 10          # joystick poll rate (Hz)
     PLANE_INTERVAL = 1.0  # seconds between OpenSky fetches
 
     maps = None
     last_map_lat = last_map_lon = None
-    img_display = None
     comp_south = comp_north = comp_east = comp_west = None
     last_overlay_state = None
 
@@ -1071,11 +1093,10 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
             )
             last_overlay_state = (round(lat, 5), round(lon, 5), blink_on)
 
-            if img_display is None:
-                img_display = ax.imshow(np.array(result))
-            else:
-                img_display.set_data(np.array(result))
-            plt.draw()
+            buf = BytesIO()
+            result.convert('RGB').save(buf, format='JPEG', quality=85)
+            with _frame_lock:
+                _latest_jpeg = buf.getvalue()
 
             # Poll joystick at POLL_HZ while waiting for the next plane fetch
             ticks = int(PLANE_INTERVAL * POLL_HZ)
@@ -1100,14 +1121,15 @@ def run(lat: float, lon: float, zoom: int, joystick=None):
                         lon=lon,
                         blink_on=blink_on,
                     )
-                    img_display.set_data(np.array(result))
-                    plt.draw()
+                    buf = BytesIO()
+                    result.convert('RGB').save(buf, format='JPEG', quality=85)
+                    with _frame_lock:
+                        _latest_jpeg = buf.getvalue()
                     last_overlay_state = overlay_state
-                plt.pause(PLANE_INTERVAL / POLL_HZ)
+                time.sleep(PLANE_INTERVAL / POLL_HZ)
 
     except KeyboardInterrupt:
         print("\nShutting down...")
-        plt.close()
 
 
 def main():
