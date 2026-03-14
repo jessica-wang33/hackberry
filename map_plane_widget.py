@@ -44,9 +44,9 @@ TOKEN_REFRESH_MARGIN = 30  # seconds before expiry to refresh
 MAP_REFETCH_THRESHOLD = 0.005  # degrees (~500 m at equator); pan beyond this to trigger a new tile fetch
 
 DEFAULT_AIRLINE_COLORS = ((255, 255, 255), (200, 200, 200), (150, 150, 150))
-LOCATION_PANEL_WIDTH = 360
-LOCATION_PANEL_HEIGHT = 170
-LOCATION_MAP_BOX_WIDTH = 324 # CHANGE THIS WHEN YOU GET MONITOR
+LOCATION_PANEL_WIDTH = 250
+LOCATION_PANEL_HEIGHT = 250
+LOCATION_MAP_BOX_WIDTH = 250 # CHANGE THIS WHEN YOU GET MONITOR
 LOCATION_COORDINATE_FONT_SIZE = 20
 
 
@@ -671,17 +671,28 @@ def create_location_panel(lat: float, lon: float, blink_on: bool,
         width=2,
     )
 
-    coordinate_text = (
-        f"LAT: {format_coordinate(lat, 'N', 'S')}, "
-        f"LON: {format_coordinate(lon, 'E', 'W')}"
-    )
     coordinate_font = load_ui_font(LOCATION_COORDINATE_FONT_SIZE, bold=True)
-    text_bbox = draw.textbbox((0, 0), coordinate_text, font=coordinate_font, stroke_width=2)
-    text_width = text_bbox[2] - text_bbox[0]
-    text_x = max(12, (width - text_width) // 2)
+    lat_text = f"LAT: {format_coordinate(lat, 'N', 'S')}"
+    lon_text = f"LON: {format_coordinate(lon, 'E', 'W')}"
+
+    lat_bbox = draw.textbbox((0, 0), lat_text, font=coordinate_font, stroke_width=2)
+    lat_width = lat_bbox[2] - lat_bbox[0]
+    lat_x = max(12, (width - lat_width) // 2)
     draw.text(
-        (text_x, 14),
-        coordinate_text,
+        (lat_x, 18),
+        lat_text,
+        fill=(230, 244, 255),
+        font=coordinate_font,
+        stroke_fill=(0, 0, 0),
+        stroke_width=2,
+    )
+
+    lon_bbox = draw.textbbox((0, 0), lon_text, font=coordinate_font, stroke_width=2)
+    lon_width = lon_bbox[2] - lon_bbox[0]
+    lon_x = max(12, (width - lon_width) // 2)
+    draw.text(
+        (lon_x, 48),
+        lon_text,
         fill=(230, 244, 255),
         font=coordinate_font,
         stroke_fill=(0, 0, 0),
@@ -689,9 +700,11 @@ def create_location_panel(lat: float, lon: float, blink_on: bool,
     )
 
     map_width = max(120, min(map_box_width, width - 36))
+    map_height = min(height - 110, max(70, int(map_width * 0.5)))
     map_left = (width - map_width) // 2
-    map_top = 62
-    map_height = height - map_top - 18
+    lower_area_top = 104
+    lower_area_height = height - lower_area_top - 18
+    map_top = lower_area_top + max(0, (lower_area_height - map_height) // 2)
     map_right = map_left + map_width
     map_bottom = map_top + map_height
 
